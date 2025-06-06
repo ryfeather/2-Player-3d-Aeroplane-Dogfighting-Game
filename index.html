@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>3D Flight Simulator - Split Screen 2P</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #info {
+      position: absolute; top: 15px; left: 15px; color: #eee; z-index: 1;
+      background: rgba(0,0,0,0.7); padding: 11px; font-family: sans-serif; font-size:16px;
+    }
+    #health1, #health2 {
+      position: absolute; top: 12px; font-family: sans-serif; font-size: 18px;
+      text-shadow: 0 0 5px #000, 0 0 6px #000, 2px 2px 0 #0007;
+      font-weight: bold;
+      z-index:2;
+      letter-spacing:2px;
+      user-select: none;
+      pointer-events: none;
+    }
+    #health1 { left:32px; color: #86c7ff;}
+    #health2 { right:32px; color: #ffa439;}
+  </style>
+</head>
+<body>
+<div id="health1">HP: 100</div>
+<div id="health2">HP: 100</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.min.js"></script>
+<script>
+// -------- Shared Setup ---------
+let scene, renderer;
+let plane1, plane2, ground;
+let plane1Rot = new THREE.Euler(0, 0, 0, 'YXZ');
+let plane2Rot = new THREE.Euler(0, 0, 0, 'YXZ');
+let cam1, cam2;
+let plane1Speed = 0.5;
+let plane2Speed = 0.5;
+let keys1 = {}, keys2 = {};
+
+// --- BULLET & HEALTH CODE ---
+let plane1Health = 100, plane2Health = 100;
+const maxHealth = 100;
+document.getElementById('health1').innerText = `HP: ${plane1Health}`;
+document.getElementById('health2').innerText = `HP: ${plane2Health}`;
+let bullets1 = [], bullets2 = [];
+const bulletRadius = 0.18, bulletLifetime = 3;
+const BULLET_SPEED = 2.2;    // MUST be > MAX_SPEED below
+const MAX_DISTANCE = 120;    // Maximum bullet travel distance before despawn
+
+const MAX_SPEED = 1.7;
+let canShoot1 = true, canShoot2 = true;
+
+// --- Scene
+scene = new THREE.Scene();
+scene.background = new THREE.Color(0x80cfff);
+const groundSize = 500;
+// --- Cameras
+function makeCamera() {
+  let cam = new THREE.PerspectiveCamera(75, 0.5*window.innerWidth/window.innerHeight, 0.1, 2000);
+  cam.position.set(0, 2, -10);
+  cam.lookAt(0,2,0);
+  return cam;
+}
+cam1 = makeCamera();
+cam2 = makeCamera();
+
+// -------- GROUND ----------
+const groundGeom = new THREE.PlaneGeometry(groundSize, groundSize, 16, 16);
+const groundMat = new THREE.MeshLambertMaterial({ color: 0x3ab978 });
+ground = new THREE.Mesh(groundGeom, groundMat);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -1;
+scene.add(ground);
+
+// -------- LIGHTS ---------
+const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+scene.add(ambient);
+const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+directional.position.set(5, 40, 20);
+scene.add(directional);
+
+// -------- TREES --------
+function createTree() {
+  const trunkGeom = new THREE.CylinderGeometry(0.08, 0.12, 0.7, 8);
+  const trunkMat  = new THREE.MeshLambertMaterial({ color: 0x8a6e45 });
+  const trunk = new THREE.Mesh(trunkGeom, trunkMat);
+  trunk.position.y = 0.35;
+  const leafGeom = new THREE.SphereGeometry(0.35+Math.random()*0.25, 8,8);
+  const leafMat  = new THREE.MeshLambertMaterial({ color: 0x257320 });
+  const leaves = new THREE.Mesh(leafGeom, leafMat);
+  leaves.position.y = 0.95;
+  const tree = new THREE.Group();
+  tree.add(trunk); tree.add(leaves);
+  return tree;
+}
+for (let i = 0; i < 180; i++) {
+  const tree = createTree();
+  const dist = 40 + Math.random() * (groundSize/2 - 30);
+  const angle = Math.random() * Math.PI * 2;
+  tree.position.x = Math.cos(angle) * dist;
+  tree.position.z = Math.sin(angle) * dist;
+  tree.rotation.y = Math.random() * Math.PI*2;
+  scene.add(tree);
+}
+
+// -------- ROADS --------
+function createRoad(length, width, x=0, z=0, rotY=0) {
+  const roadMat = new THREE.MeshLambertMaterial({ color: 0x373737 });
+  const roadGeom = new THREE.PlaneGeometry(length, width);
+  const road = new THREE.Mesh(roadGeom, roadMat);
+  road.position.set(x, 0.001, z);
+  road.rotation.x = -Math.PI/2;
+  road.rotation.z = rotY;
+  return road;
+}
+scene.add(createRoad(groundSize*0.9, 3, 0, 0, 0));
+scene.add(createRoad(groundSize*0.9, 3, 0, 0, Math.PI/2));
+function addRoadStripes(center, axis, count, spacing) {
+  for (let i = -count; i < count; i++) {
+    const stripeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const stripeGeom = new THREE.PlaneGeometry(2, 0.3);
+    const stripe = new THREE.Mesh(stripeGeom, stripeMat);
+    if (axis === 'z') {
+      stripe.position.set(center, 0.002, i*spacing);
+    } else {
+      stripe.position.set(i*spacing, 0.002, center);
+    }
+    stripe.rotation.x = -Math.PI/2;
+    scene.add(stripe);
+  }
+}
+addRoadStripes(0, 'z', 40, 6);
+addRoadStripes(0, 'x', 40, 6);
+
+// -------- HOUSES --------
+function createHouse() {
+  const width = 1.4 + Math.random()*0.7;
+  const height = 1 + Math.random()*0.4;
+  const depth = 1.4 + Math.random()*0.7;
+  const houseMat = new THREE.MeshLambertMaterial({ color: 0xd77041 });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), houseMat);
+  base.position.y = height/2;
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0x9a2321 });
+  const roofGeom = new THREE.ConeGeometry(width*0.7, 0.5, 4);
+  const roof = new THREE.Mesh(roofGeom, roofMat);
+  roof.position.y = height + 0.23;
+  roof.rotation.y = Math.PI/4;
+  const house = new THREE.Group();
+  house.add(base); house.add(roof);
+  return house;
+}
+for (let i = 0; i < 35; i++) {
+  const house = createHouse();
+  let dist = 32 + Math.random()*120;
+  let angle = Math.random() * Math.PI * 2;
+  let x = Math.cos(angle) * dist;
+  let z = Math.sin(angle) * dist;
+  if (Math.abs(x) < 8) x = 8 * Math.sign(x) + 12 * Math.sign(x) * Math.random();
+  if (Math.abs(z) < 8) z = 8 * Math.sign(z) + 12 * Math.sign(z) * Math.random();
+  house.position.set(x, 0, z);
+  house.rotation.y = Math.random()*Math.PI*2;
+  scene.add(house);
+}
+
+// -------- CLOUDS --------
+function createCloud() {
+  const group = new THREE.Group();
+  const cloudColor = new THREE.Color(0xffffff).lerp(new THREE.Color(0xf4f8ff), Math.random()*0.4);
+  let count = 3 + Math.floor(Math.random()*3);
+  for (let i=0; i < count; i++) {
+    const radius = 1.2 + Math.random()*0.7;
+    const offsetY = Math.random()*0.65-0.3;
+    const offsetX = (i-1)*1.2 + Math.random()*0.7;
+    const mat = new THREE.MeshLambertMaterial({ color: cloudColor });
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(radius, 10, 8), mat);
+    sphere.position.set(offsetX, offsetY, Math.random()*0.5);
+    group.add(sphere);
+  }
+  return group;
+}
+for(let i=0;i<18;i++){
+  const cloud = createCloud();
+  cloud.position.x = (Math.random() - 0.5) * groundSize * 0.8;
+  cloud.position.z = (Math.random() - 0.5) * groundSize * 0.8;
+  cloud.position.y = 14 + Math.random()*26;
+  scene.add(cloud);
+}
+
+// ----------- PLANES ------------
+function createPlane(color = 0xa0a0a0, wingColor = 0x202020) {
+  const group = new THREE.Group();
+  const bodyGeom = new THREE.BoxGeometry(1, 0.2, 4);
+  const bodyMat = new THREE.MeshPhongMaterial({ color: color });
+  const body = new THREE.Mesh(bodyGeom, bodyMat);
+  const wingGeom = new THREE.BoxGeometry(4, 0.05, 0.7);
+  const wingMat = new THREE.MeshPhongMaterial({ color: wingColor });
+  const wing = new THREE.Mesh(wingGeom, wingMat);
+  wing.position.y = -0.08;
+  wing.position.z = 0.15;
+  const tailWingGeom = new THREE.BoxGeometry(1, 0.05, 0.3);
+  const tailWing = new THREE.Mesh(tailWingGeom, wingMat);
+  tailWing.position.y = -0.09;
+  tailWing.position.z = -1.8;
+  group.add(body, wing, tailWing);
+  return group;
+}
+
+// Plane 1 (WASD, left, blue)
+plane1 = createPlane(0x2a7cff, 0x204070);
+plane1.position.set(-16, 2, 0);
+scene.add(plane1);
+
+// Plane 2 (Arrows, right, orange)
+plane2 = createPlane(0xf9922b, 0xa45a11);
+plane2.position.set(16,2, 0);
+scene.add(plane2);
+
+// ----------- INPUT -------------
+const wasdMap = { 'KeyW':'w', 'KeyS':'s', 'KeyA':'a', 'KeyD':'d', 'KeyF':'f', 'KeyG':'g', 'KeyH':'h' };
+const arrowMap = { 'ArrowUp':'up', 'ArrowDown':'down', 'ArrowLeft':'left', 'ArrowRight':'right', 'KeyJ':'j', 'KeyK':'k', 'KeyL':'l' };
+window.addEventListener('keydown', e => {
+  // -- BULLET & ACC/DEC CODE --
+  if(wasdMap[e.code]) keys1[wasdMap[e.code]] = true;
+  if(arrowMap[e.code]) keys2[arrowMap[e.code]] = true;
+  // Plane 1 (WASD) shoot
+  if(e.code === "KeyH" && canShoot1 && plane1Health > 0) {
+    shootBullet1();
+    canShoot1 = false;
+  }
+  // Plane 2 (ARROW) shoot
+  if(e.code === "KeyL" && canShoot2 && plane2Health > 0) {
+    shootBullet2();
+    canShoot2 = false;
+  }
+});
+window.addEventListener('keyup', e => {
+  if(wasdMap[e.code]) keys1[wasdMap[e.code]] = false;
+  if(arrowMap[e.code]) keys2[arrowMap[e.code]] = false;
+  // -- Bullet anti-repeat: allow shooting again when released
+  if(e.code === "KeyH") canShoot1 = true;
+  if(e.code === "KeyL") canShoot2 = true;
+});
+
+// --------- BULLET CREATION ----------
+function makeBulletMesh(colorHex) {
+  const g = new THREE.SphereGeometry(bulletRadius, 9,9);
+  const m = new THREE.MeshPhongMaterial({ color: colorHex, emissive: colorHex, emissiveIntensity:0.6 });
+  return new THREE.Mesh(g, m);
+}
+
+function shootBullet1() {
+  if (bullets1.length >= 10) return; // Prevent more than 10
+  const forward = new THREE.Vector3(0,0,1).applyEuler(plane1Rot).normalize();
+  const pos = plane1.position.clone().add(forward.clone().multiplyScalar(2));
+  const bulletVelocity = forward.clone().multiplyScalar(BULLET_SPEED);
+
+  const b = makeBulletMesh(0x339cff);
+  b.position.copy(pos);
+  scene.add(b);
+  bullets1.push({
+    mesh: b,
+    vel: bulletVelocity,
+    spawn: performance.now()/1000,
+    start: pos.clone()
+  });
+}
+function shootBullet2() {
+  if (bullets2.length >= 10) return; // Prevent more than 10
+  const forward = new THREE.Vector3(0,0,1).applyEuler(plane2Rot).normalize();
+  const pos = plane2.position.clone().add(forward.clone().multiplyScalar(2));
+  const bulletVelocity = forward.clone().multiplyScalar(BULLET_SPEED);
+
+  const b = makeBulletMesh(0xfbb630);
+  b.position.copy(pos);
+  scene.add(b);
+  bullets2.push({
+    mesh: b,
+    vel: bulletVelocity,
+    spawn: performance.now()/1000,
+    start: pos.clone()
+  });
+}
+
+// --------- RENDERER ----------
+renderer = new THREE.WebGLRenderer();
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setScissorTest(true);
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize', () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  cam1.aspect = 0.5 * window.innerWidth / window.innerHeight;
+  cam1.updateProjectionMatrix();
+  cam2.aspect = 0.5 * window.innerWidth / window.innerHeight;
+  cam2.updateProjectionMatrix();
+});
+
+// -------- ANIMATE -----------
+function animate() {
+  requestAnimationFrame(animate);
+
+  // --- Update Player 1 (WASD/left) movement ---
+  let pitch1=0, yaw1=0;
+  if(keys1['w']) pitch1 = -0.02;
+  if(keys1['s']) pitch1 = 0.02;
+  if(keys1['a']) yaw1 = 0.03;
+  if(keys1['d']) yaw1 = -0.03;
+  plane1Rot.x += pitch1;
+  plane1Rot.y += yaw1;
+  plane1Rot.x = Math.max(-Math.PI/3, Math.min(Math.PI/3, plane1Rot.x));
+  plane1.rotation.copy(plane1Rot);
+  if(keys1['f']) plane1Speed = Math.min(plane1Speed+0.02, MAX_SPEED);
+  if(keys1['g']) plane1Speed = Math.max(plane1Speed-0.025, 0.13);
+  let forward1 = new THREE.Vector3(0,0,1).applyEuler(plane1Rot).normalize();
+  plane1.position.add(forward1.multiplyScalar(plane1Speed));
+  if(plane1Rot.x>0) plane1.position.y += 0.01 * plane1Rot.x;
+  if(plane1.position.y < 0) plane1.position.y = 0;
+
+  // --- Update Player 2 (Arrows/right) movement ---
+  let pitch2=0, yaw2=0;
+  if(keys2['up']) pitch2 = -0.02;
+  if(keys2['down']) pitch2 = 0.02;
+  if(keys2['left']) yaw2 = 0.03;
+  if(keys2['right']) yaw2 = -0.03;
+  plane2Rot.x += pitch2;
+  plane2Rot.y += yaw2;
+  plane2Rot.x = Math.max(-Math.PI/3, Math.min(Math.PI/3, plane2Rot.x));
+  plane2.rotation.copy(plane2Rot);
+  if(keys2['j']) plane2Speed = Math.min(plane2Speed+0.02, MAX_SPEED);
+  if(keys2['k']) plane2Speed = Math.max(plane2Speed-0.025, 0.13);
+  let forward2 = new THREE.Vector3(0,0,1).applyEuler(plane2Rot).normalize();
+  plane2.position.add(forward2.multiplyScalar(plane2Speed));
+  if(plane2Rot.x>0) plane2.position.y += 0.01 * plane2Rot.x;
+  if(plane2.position.y < 0) plane2.position.y = 0;
+
+  // --- BULLET & HIT CODE ---
+  const nowSec = performance.now()/1000;
+  // Plane1 Bullets (blue, hit P2)
+  for(let i=bullets1.length-1;i>=0;i--) {
+    let b=bullets1[i];
+    b.mesh.position.add(b.vel.clone().multiplyScalar(1/2));
+    // distance travelled
+    let distMoved = b.mesh.position.distanceTo(b.start);
+    // hit? (sphere test)
+    if(plane2Health>0) {
+      let dist = b.mesh.position.distanceTo(plane2.position);
+      if(dist < 1.9) { // ~radius
+        plane2Health = Math.max(0, plane2Health-15);
+        document.getElementById('health2').innerText = `HP: ${plane2Health}`;
+        scene.remove(b.mesh);
+        bullets1.splice(i,1);
+        continue;
+      }
+    }
+    // too far? Remove to prevent lag
+    if(distMoved > MAX_DISTANCE) {
+      scene.remove(b.mesh);
+      bullets1.splice(i,1);
+      continue;
+    }
+  }
+  // Plane2 Bullets (orange, hit P1)
+  for(let i=bullets2.length-1;i>=0;i--) {
+    let b=bullets2[i];
+    b.mesh.position.add(b.vel.clone().multiplyScalar(1/2));
+    let distMoved = b.mesh.position.distanceTo(b.start);
+    if(plane1Health>0) {
+      let dist = b.mesh.position.distanceTo(plane1.position);
+      if(dist < 1.9) {
+        plane1Health = Math.max(0, plane1Health-15);
+        document.getElementById('health1').innerText = `HP: ${plane1Health}`;
+        scene.remove(b.mesh);
+        bullets2.splice(i,1);
+        continue;
+      }
+    }
+    if(distMoved > MAX_DISTANCE) {
+      scene.remove(b.mesh);
+      bullets2.splice(i,1);
+      continue;
+    }
+  }
+
+  // -- If health zero, plane is "dead and drifting" --
+  if(plane1Health <= 0) plane1Speed *= 0.985;
+  if(plane2Health <= 0) plane2Speed *= 0.985;
+
+  // --- Camera 1 (WASD, Left)
+  let cam1_offset = new THREE.Vector3(0, 2.5, -10).applyEuler(plane1Rot);
+  cam1.position.copy(plane1.position).add(cam1_offset);
+  cam1.lookAt(plane1.position);
+
+  // --- Camera 2 (Arrows, Right)
+  let cam2_offset = new THREE.Vector3(0, 2.5, -10).applyEuler(plane2Rot);
+  cam2.position.copy(plane2.position).add(cam2_offset);
+  cam2.lookAt(plane2.position);
+
+  // --- RENDER: two views split! ---
+  const w = window.innerWidth,
+        h = window.innerHeight;
+
+  // LEFT view (Player 1)
+  renderer.setViewport(0, 0, w/2, h);
+  renderer.setScissor(0, 0, w/2, h);
+  renderer.render(scene, cam1);
+
+  // RIGHT view (Player 2)
+  renderer.setViewport(w/2, 0, w/2, h);
+  renderer.setScissor(w/2, 0, w/2, h);
+  renderer.render(scene, cam2);
+}
+
+animate();
+</script>
+</body>
+</html>
