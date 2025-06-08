@@ -397,7 +397,7 @@ function animate() {
   // Plane1 Bullets (blue, hit P2)
   for(let i=bullets1.length-1;i>=0;i--) {
     let b=bullets1[i];
-    b.mesh.position.add(b.vel.clone().multiplyScalar(1/2));
+    b.mesh.position.add(b.vel.clone().multiplyScalar(1));
     // distance travelled
     let distMoved = b.mesh.position.distanceTo(b.start);
     // hit? (sphere test)
@@ -421,7 +421,7 @@ function animate() {
   // Plane2 Bullets (orange, hit P1)
   for(let i=bullets2.length-1;i>=0;i--) {
     let b=bullets2[i];
-    b.mesh.position.add(b.vel.clone().multiplyScalar(1/2));
+    b.mesh.position.add(b.vel.clone().multiplyScalar(1));
     let distMoved = b.mesh.position.distanceTo(b.start);
     if(plane1Health>0) {
       let dist = b.mesh.position.distanceTo(plane1.position);
