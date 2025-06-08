@@ -113,24 +113,6 @@ function createRoad(length, width, x=0, z=0, rotY=0) {
   road.rotation.z = rotY;
   return road;
 }
-scene.add(createRoad(groundSize*0.9, 3, 0, 0, 0));
-scene.add(createRoad(groundSize*0.9, 3, 0, 0, Math.PI/2));
-function addRoadStripes(center, axis, count, spacing) {
-  for (let i = -count; i < count; i++) {
-    const stripeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-    const stripeGeom = new THREE.PlaneGeometry(2, 0.3);
-    const stripe = new THREE.Mesh(stripeGeom, stripeMat);
-    if (axis === 'z') {
-      stripe.position.set(center, 0.002, i*spacing);
-    } else {
-      stripe.position.set(i*spacing, 0.002, center);
-    }
-    stripe.rotation.x = -Math.PI/2;
-    scene.add(stripe);
-  }
-}
-addRoadStripes(0, 'z', 40, 6);
-addRoadStripes(0, 'x', 40, 6);
 
 // -------- HOUSES --------
 function createHouse() {
@@ -187,32 +169,109 @@ for(let i=0;i<18;i++){
 }
 
 // ----------- PLANES ------------
-function createPlane(color = 0xa0a0a0, wingColor = 0x202020) {
+function createPlane(
+  fuselageColor = 0xa0a0a0,   // Main body
+  wingColor = 0x202020,       // Wings, struts
+  tailColor = 0x111111,       // Tail pieces
+  tailWheelColor = 0x222222   // Tail wheel
+) {
   const group = new THREE.Group();
-  const bodyGeom = new THREE.BoxGeometry(1, 0.2, 4);
-  const bodyMat = new THREE.MeshPhongMaterial({ color: color });
-  const body = new THREE.Mesh(bodyGeom, bodyMat);
-  const wingGeom = new THREE.BoxGeometry(4, 0.05, 0.7);
+
+  // ==== Fuselage - add a narrowing cone tail ====
+  const fuselageGeom = new THREE.CylinderGeometry(0.32, 0.55, 3.5, 16);
+  const fuselageMat = new THREE.MeshPhongMaterial({ color: fuselageColor });
+  const fuselage = new THREE.Mesh(fuselageGeom, fuselageMat);
+  fuselage.rotation.x = Math.PI / 2;
+  group.add(fuselage);
+
+  // Tapered tail ("pipe" shape - cone)
+  const tailConeGeom = new THREE.ConeGeometry(0.22, 0.8, 16);
+  const tailCone = new THREE.Mesh(tailConeGeom, fuselageMat);
+  tailCone.position.set(0, 0, -1.9);
+  tailCone.rotation.x = Math.PI/2;
+  group.add(tailCone);
+
+  // ==== Cockpit bubble ====
+  const cockpitGeom = new THREE.SphereGeometry(0.26, 18, 16, 0, Math.PI*2, 0, Math.PI/1.5);
+  const cockpitMat  = new THREE.MeshPhongMaterial({ color:0x99e2fb, transparent: true, opacity: 0.78, shininess:80 });
+  const cockpit = new THREE.Mesh(cockpitGeom, cockpitMat);
+  cockpit.position.set(0, 0.14, -0.5);
+  group.add(cockpit);
+
+  // ==== Propeller disk ====
+  const propGeom = new THREE.CylinderGeometry(0.14, 0.13, 0.05, 12);
+  const propMat = new THREE.MeshPhongMaterial({ color: 0x444444, transparent:true, opacity: 0.7 });
+  const prop = new THREE.Mesh(propGeom, propMat);
+  prop.position.set(0, 0, 2);
+  prop.rotation.z = Math.PI/2;
+  group.add(prop);
+
+  // ==== BI-PLANE WINGS ====
+  const wingSpan = 2.55, wingWidth = 0.12, wingDepth = 0.60, biplaneHeight = 0.45;
+  const wingGeom = new THREE.BoxGeometry(wingSpan, wingWidth, wingDepth);
   const wingMat = new THREE.MeshPhongMaterial({ color: wingColor });
-  const wing = new THREE.Mesh(wingGeom, wingMat);
-  wing.position.y = -0.08;
-  wing.position.z = 0.15;
-  const tailWingGeom = new THREE.BoxGeometry(1, 0.05, 0.3);
-  const tailWing = new THREE.Mesh(tailWingGeom, wingMat);
-  tailWing.position.y = -0.09;
-  tailWing.position.z = -1.8;
-  group.add(body, wing, tailWing);
+
+  for (let i = 0; i < 2; i++) {
+    const y = i === 0 ? -biplaneHeight / 2 : biplaneHeight / 2;
+    const wing = new THREE.Mesh(wingGeom, wingMat);
+    wing.position.set(0, y, 0);
+    group.add(wing);
+  }
+  // Struts
+  for(let z of [0.3, -0.3]) {
+    for(let x of [-0.7, 0.7]) {
+      const strutGeom = new THREE.BoxGeometry(0.07, biplaneHeight, 0.07);
+      const strut = new THREE.Mesh(strutGeom, wingMat);
+      strut.position.set(x, 0, -z);
+      group.add(strut);
+    }
+  }
+
+  // ==== Tail Assembly (Different Color) ==== //
+  // Horizontal stabilizers
+  const stabilizerLength = 0.7, stabilizerThick = 0.035, stabilizerDeep = 0.18;
+  const stabGeom = new THREE.BoxGeometry(stabilizerLength, stabilizerThick, stabilizerDeep);
+  const stabMat = new THREE.MeshPhongMaterial({ color: tailColor }); // << here
+  const stabilizer = new THREE.Mesh(stabGeom, stabMat);
+  stabilizer.position.set(0, -0.08, -2.2);
+  group.add(stabilizer);
+
+  // Vertical rudder
+  const rudderShape = new THREE.Shape();
+  rudderShape.moveTo(0, 0);
+  rudderShape.quadraticCurveTo(0.09, 0.27, 0, 0.53);
+  rudderShape.lineTo(0, 0.53);
+  rudderShape.lineTo(-0.05, 0.43);
+  rudderShape.lineTo(-0.06, 0.13);
+  rudderShape.lineTo(0, 0);
+
+  const extrudeSettings = { depth: 0.045, bevelEnabled: false };
+  const rudderGeom = new THREE.ExtrudeGeometry(rudderShape, extrudeSettings);
+  const rudderMat = new THREE.MeshPhongMaterial({ color: tailColor }); // << here too
+  const rudder = new THREE.Mesh(rudderGeom, rudderMat);
+  rudder.position.set(0, 0.13, -2.22);
+  rudder.rotation.y = Math.PI/2;
+  group.add(rudder);
+
+  // ==== Tiny tailwheel (Different Color) ====
+  const tailWheelGeom = new THREE.SphereGeometry(0.06, 8, 8);
+  const tailWheelMat = new THREE.MeshPhongMaterial({ color: tailWheelColor });
+  const tailWheel = new THREE.Mesh(tailWheelGeom, tailWheelMat);
+  tailWheel.position.set(0, -0.23, -2.36);
+  group.add(tailWheel);
+
   return group;
 }
 
-// Plane 1 (WASD, left, blue)
-plane1 = createPlane(0x2a7cff, 0x204070);
-plane1.position.set(-16, 2, 0);
-scene.add(plane1);
+// Plane 1 (blue, grey tail, black wheel)
+plane1 = createPlane(0x2a7cff, 0x204070, 0x555555, 0x222222);
+// Plane 2 (orange, black tail, dark grey wheel)
+plane2 = createPlane(0xf9922b, 0xa45a11, 0x111111, 0x444444);
 
-// Plane 2 (Arrows, right, orange)
-plane2 = createPlane(0xf9922b, 0xa45a11);
-plane2.position.set(16,2, 0);
+plane1.position.set(-16, 2, 0);
+plane2.position.set(16, 2, 0);
+
+scene.add(plane1);
 scene.add(plane2);
 
 // ----------- INPUT -------------
@@ -398,13 +457,9 @@ function animate() {
   // --- RENDER: two views split! ---
   const w = window.innerWidth,
         h = window.innerHeight;
-
-  // LEFT view (Player 1)
   renderer.setViewport(0, 0, w/2, h);
   renderer.setScissor(0, 0, w/2, h);
   renderer.render(scene, cam1);
-
-  // RIGHT view (Player 2)
   renderer.setViewport(w/2, 0, w/2, h);
   renderer.setScissor(w/2, 0, w/2, h);
   renderer.render(scene, cam2);
